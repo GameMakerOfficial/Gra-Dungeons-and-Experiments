@@ -511,21 +511,23 @@ async function loadClans(container) {
 }
 
 async function loadOwnerAccounts(container) {
+    const accountFilter = container.dataset.filter || "active";
+    const searchTerm = (container.dataset.search || "").toLowerCase();
     container.textContent = "ŁADOWANIE KONT...";
     try {
         const snapshot = await db.collection("users").limit(200).get();
         container.innerHTML = "";
-        if (snapshot.empty) {
-            container.textContent = "Brak kont.";
-            return;
-        }
 
         snapshot.forEach(doc => {
             const account = doc.data();
+            const nickname = account.nickname || doc.id;
+            const isDeleted = account.accountDeleted === true;
+            if ((accountFilter === "deleted") !== isDeleted) return;
+            if (searchTerm && !nickname.toLowerCase().includes(searchTerm)) return;
             const card = document.createElement("div");
             card.className = "lab-card";
             const heading = document.createElement("strong");
-            heading.textContent = `${account.nickname || doc.id} [${account.rank || "PLAYER"}]`;
+            heading.textContent = `${nickname} [${account.rank || "PLAYER"}]`;
             card.appendChild(heading);
 
             if (doc.id === player.nickname) {
@@ -607,6 +609,9 @@ async function loadOwnerAccounts(container) {
             card.append(newNameInput, newPasswordInput, renameButton, passwordButton, deleteButton);
             container.appendChild(card);
         });
+        if (!container.children.length) {
+            container.textContent = searchTerm ? "Nie znaleziono kont dla tego nicku." : accountFilter === "deleted" ? "Brak usuniętych kont." : "Brak aktywnych kont.";
+        }
     } catch (error) {
         console.error("Błąd zarządzania kontami:", error);
         container.textContent = "Nie udało się pobrać kont.";
@@ -692,7 +697,7 @@ function openSocial() {
             <div class="profile-row"><span>POZIOM LOCHU</span><strong>${player.dungeonLevel}</strong></div>
             <button class="slot-action" id="copy-player-id" type="button">KOPIUJ SWOJE ID</button>
         </div>
-        ${player.rank === "OWNER" ? '<div id="social-admin" style="display:none"><div class="modal-section-title">ZARZĄDZANIE KONTAMI</div><div class="lab-cost">Możesz zmienić nazwę, hasło albo usunąć konto innego gracza.</div><div id="owner-accounts-list"></div></div>' : ""}
+        ${player.rank === "OWNER" ? '<div id="social-admin" style="display:none"><div class="modal-section-title">ZARZĄDZANIE KONTAMI</div><input class="modal-input" id="owner-account-search" type="search" placeholder="SZUKAJ PO NICKU" maxlength="30"><div class="modal-tabs" id="owner-account-filters"><button class="modal-tab active" type="button" data-account-filter="active">AKTYWNE</button><button class="modal-tab" type="button" data-account-filter="deleted">USUNIĘTE</button></div><div class="lab-cost">Możesz zmienić nazwę, hasło albo usunąć konto innego gracza.</div><div id="owner-accounts-list"></div></div>' : ""}
     `;
 
     const friends = Array.isArray(player.friends) ? player.friends : [];
@@ -722,7 +727,23 @@ function openSocial() {
         messageForm.textContent = "Wiadomości globalne mogą wysyłać tylko rangi OWNER i VIP.";
     }
     loadGlobalMessages(content.querySelector("#global-messages-list"));
-    if (player.rank === "OWNER") loadOwnerAccounts(content.querySelector("#owner-accounts-list"));
+    if (player.rank === "OWNER") {
+        const accountsList = content.querySelector("#owner-accounts-list");
+        accountsList.dataset.filter = "active";
+        accountsList.dataset.search = "";
+        loadOwnerAccounts(accountsList);
+        const accountSearch = content.querySelector("#owner-account-search");
+        accountSearch.addEventListener("input", () => {
+            accountsList.dataset.search = accountSearch.value.trim();
+            loadOwnerAccounts(accountsList);
+        });
+        content.querySelectorAll("[data-account-filter]").forEach(filterButton => filterButton.addEventListener("click", () => {
+            content.querySelectorAll("[data-account-filter]").forEach(button => button.classList.remove("active"));
+            filterButton.classList.add("active");
+            accountsList.dataset.filter = filterButton.dataset.accountFilter;
+            loadOwnerAccounts(accountsList);
+        }));
+    }
 
     content.querySelector("#create-clan").addEventListener("click", async () => {
         const name = content.querySelector("#clan-name").value.trim();
@@ -1056,50 +1077,26 @@ async function showLeaderboard() {
 }
 
 function enterDungeon() {
-    const dungeonTime = getDungeonTime();
-    showModal(
-        "LOCH",
-        `Wchodzisz do lochu poziomu ${player.dungeonLevel}.\n\nSzansa sukcesu: ${getDungeonSuccessChance()}%.`,
-        [
-            { text: "ANULUJ", color: "#777" },
-            {
-                text: "WEJDŹ",
-                color: "#4CAF50",
-                action: () => {
-                    gameAudio.startDungeonCombat();
-                    showModal(
-                        "WYPRAWA",
-                        "Bohater przeszukuje loch...",
-                        [],
-                        dungeonTime,
-                        () => {
-                            gameAudio.stopDungeonCombat();
-                            const successChance = getDungeonSuccessChance();
-                            const success = Math.random() * 100 < successChance;
-
-                            if (success) {
-                                gameAudio.success();
-                                player.dungeonLevel++;
-                                const reward = Math.max(1, Math.round(getDropMultiplier()));
-                                player.inventory.stone += reward;
-                                player.inventory.meat += 1;
-                                const newUpgradeItems = checkSniperMilestoneReward();
-                                updateUI();
-                                showModal(
-                                    "SUKCES!",
-                                    `Wyprawa udana!\n\n+${reward} Stone\n+1 Meat\nNowy poziom lochu: ${player.dungeonLevel}${newUpgradeItems ? `\n+${newUpgradeItems} Upgrade Item` : ""}`,
-                                    [{ text: "SUPER", color: "#4CAF50" }]
-                                );
-                            } else {
-                                gameAudio.failure();
-                                showModal("PORAŻKA", "Potwory wygoniły cię z lochu. Spróbuj ponownie.", [{ text: "OK", color: "#f44336" }]);
-                            }
-                        }
-                    );
-                }
-            }
-        ]
-    );
+    normalizePlayerData();
+    const dungeonState = {
+        nickname: player.nickname,
+        rank: player.rank || "PLAYER",
+        dungeonLevel: player.dungeonLevel,
+        weapon: player.weapon || "None",
+        damageBonus: player.damageBonus || 0,
+        defenseBonus: player.defenseBonus || 0,
+        dungeonSuccessBonus: player.dungeonSuccessBonus || 0,
+        inventory: { ...player.inventory }
+    };
+    saveProgress()
+        .then(() => {
+            sessionStorage.setItem("pixelRpgDungeonState", JSON.stringify(dungeonState));
+            window.location.href = "dungeonenter.html";
+        })
+        .catch(error => {
+            console.error("Błąd przygotowania lochu:", error.code, error.message, error);
+            showModal("BŁĄD LOCHU", "Nie udało się zapisać postępu przed wejściem do lochu.", [{ text: "OK", color: "#f44336" }]);
+        });
 }
 
 // ============================================================
@@ -1218,6 +1215,12 @@ async function handleLogin() {
             const credential = await auth.signInWithEmailAndPassword(getVirtualEmail(nickInput), passInput);
             authUser = credential.user;
         } catch (authError) {
+            console.error("Firebase logowanie Auth - code:", authError.code);
+            console.error("Firebase logowanie Auth - message:", authError.message);
+            console.error("Firebase logowanie Auth - nickname:", nickInput);
+            console.error("Firebase logowanie Auth - virtualEmail:", getVirtualEmail(nickInput));
+            console.error("Firebase logowanie Auth - firestoreAuthUid:", userData.authUid || "brak");
+            console.error("Firebase logowanie Auth - rank:", userData.rank || "PLAYER");
             // Jednorazowa migracja kont utworzonych przed wdrożeniem Firebase Auth.
             if (authError.code === "auth/user-not-found" && userData.password === passInput && passInput.length >= 6) {
                 const credential = await auth.createUserWithEmailAndPassword(getVirtualEmail(nickInput), passInput);
@@ -1267,7 +1270,10 @@ async function handleLogin() {
         }
 
     } catch (e) {
-        showModal("BŁĄD LOGOWANIA", getFirebaseErrorMessage(e, "logowania"), [{ text: "OK", color: "#f44336" }]);
+        const accountHint = e.code === "auth/invalid-credential" || e.code === "auth/wrong-password"
+            ? " Jeśli to stare konto OWNER, jego hasło mogło nie zostać zsynchronizowane z Firebase Authentication."
+            : "";
+        showModal("BŁĄD LOGOWANIA", `${getFirebaseErrorMessage(e, "logowania")}${accountHint}`, [{ text: "OK", color: "#f44336" }]);
     }
 }
 

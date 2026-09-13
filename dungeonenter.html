@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Loch | Pixel RPG Tycoon</title>
+    <style>
+        :root { color-scheme: dark; --ink: #f7e7b2; --gold: #ffc857; --stone: #251d1c; --wall: #5b4638; --accent: #63c174; }
+        * { box-sizing: border-box; user-select: none; -webkit-tap-highlight-color: transparent; }
+        html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #0b090b; color: var(--ink); font-family: "Courier New", monospace; }
+        #dungeon-app { position: relative; width: 100%; height: 100%; display: grid; grid-template-rows: auto 1fr auto; background: radial-gradient(circle at 50% 35%, #3b2b2b 0, #171217 48%, #09080b 100%); }
+        #hud { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 10px 14px; background: rgba(11, 9, 11, .92); border-bottom: 2px solid #6e4e34; z-index: 2; }
+        #hud strong { color: var(--gold); }
+        #hud span { font-size: 13px; }
+        #health-wrap { min-width: 140px; }
+        #health-bar { height: 12px; margin-top: 5px; background: #291416; border: 1px solid #9c4f44; }
+        #health-fill { width: 100%; height: 100%; background: linear-gradient(90deg, #d94a45, #e9a44d); transition: width .15s; }
+        #stage { position: relative; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 8px; }
+        canvas { width: min(100%, 1100px); height: 100%; max-height: 720px; image-rendering: pixelated; border: 3px solid #806043; box-shadow: 0 0 0 5px #171116, 0 12px 35px #000; background: #171217; }
+        #minimap { position: absolute; right: 18px; top: 18px; width: 155px; height: 92px; padding: 7px; background: rgba(10, 8, 10, .85); border: 1px solid #806043; }
+        #minimap div { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; width: 100%; height: 100%; }
+        .map-room { background: #43352f; border: 1px solid #87694e; opacity: .35; }
+        .map-room.visited { opacity: .8; }
+        .map-room.current { background: var(--gold); opacity: 1; }
+        .map-room.cleared { background: var(--accent); }
+        #controls { display: flex; justify-content: center; align-items: center; gap: 12px; min-height: 78px; padding: 10px; background: rgba(11, 9, 11, .94); border-top: 2px solid #6e4e34; z-index: 2; }
+        #joystick { position: relative; width: 62px; height: 62px; border: 2px solid #806043; border-radius: 50%; background: rgba(80, 59, 49, .75); touch-action: none; }
+        #stick { position: absolute; left: 17px; top: 17px; width: 24px; height: 24px; border-radius: 50%; background: var(--gold); box-shadow: 0 0 0 3px #5e452d; }
+        button { border: 2px solid #a86d3e; background: #684326; color: #fff3c7; padding: 12px 14px; font: 700 12px "Courier New", monospace; cursor: pointer; box-shadow: 0 3px 0 #2d1b16; }
+        button:active { transform: translateY(2px); box-shadow: none; }
+        #attack { min-width: 120px; background: #9b4033; border-color: #d2744d; }
+        #leave { background: #3c3636; }
+        #message { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(90%, 420px); padding: 22px; text-align: center; background: rgba(15, 10, 13, .96); border: 3px solid var(--gold); box-shadow: 0 10px 35px #000; z-index: 4; }
+        #message h1 { margin: 0 0 12px; font-size: 20px; color: var(--gold); }
+        #message p { line-height: 1.5; font-size: 14px; white-space: pre-line; }
+        #message button { margin-top: 8px; }
+        .hidden { display: none !important; }
+        @media (max-width: 600px) { #hud span { font-size: 10px; } #minimap { width: 110px; height: 70px; right: 14px; top: 14px; } canvas { border-width: 2px; } #controls { justify-content: space-between; } button { padding: 11px 9px; font-size: 10px; } }
+    </style>
+</head>
+<body>
+<div id="dungeon-app">
+    <header id="hud">
+        <span><strong>LOCH</strong> | POKÓJ <b id="room-label">1/5</b></span>
+        <span>BRON: <strong id="weapon-label">Brak</strong></span>
+        <div id="health-wrap"><span>HP <b id="health-label">100/100</b></span><div id="health-bar"><div id="health-fill"></div></div></div>
+    </header>
+    <main id="stage">
+        <canvas id="dungeon-canvas" width="960" height="540" aria-label="Plansza lochu"></canvas>
+        <div id="minimap"><div id="map-grid"></div></div>
+        <div id="message" class="hidden"><h1 id="message-title"></h1><p id="message-text"></p><button id="message-action">WRÓĆ NA MAPĘ</button></div>
+    </main>
+    <footer id="controls">
+        <div id="joystick" aria-label="Joystick"><div id="stick"></div></div>
+        <button id="attack" type="button">ATAK [SPACJA]</button>
+        <button id="leave" type="button">WYJDŹ</button>
+    </footer>
+</div>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script>
+(() => {
+    const firebaseConfig = {
+        apiKey: "AIzaSyDbVxlkWCzXBmsnQ5uvFpuW91Xevf2ZR54",
+        authDomain: "dungeons-and-experiments.firebaseapp.com",
+        projectId: "dungeons-and-experiments",
+        storageBucket: "dungeons-and-experiments.firebasestorage.app",
+        messagingSenderId: "104990230475",
+        appId: "1:104990230475:web:58e9dcca6be7a434ded84e",
+        measurementId: "G-YCS8LP95X0"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+    const state = JSON.parse(sessionStorage.getItem("pixelRpgDungeonState") || "null");
+    if (!state || !state.nickname) { window.location.href = "index.html"; return; }
+
+    const canvas = document.getElementById("dungeon-canvas");
+    const ctx = canvas.getContext("2d");
+    const roomWidth = 960;
+    const roomHeight = 540;
+    const rooms = [
+        { id: 0, x: 1, y: 0, exits: [1], enemies: 2 },
+        { id: 1, x: 1, y: 1, exits: [0, 2], enemies: 3 },
+        { id: 2, x: 2, y: 1, exits: [1, 3], enemies: 2 },
+        { id: 3, x: 1, y: 2, exits: [2, 4], enemies: 4 },
+        { id: 4, x: 0, y: 2, exits: [3], enemies: 1 }
+    ];
+    const player = { x: 120, y: roomHeight / 2, radius: 15, hp: 100, maxHp: 100, speed: 210, attackAt: 0 };
+    const keys = new Set();
+    const joystick = { x: 0, y: 0, active: false };
+    let currentRoom = 0;
+    let lastFrame = performance.now();
+    let defeated = 0;
+    let finished = false;
+    let enemies = [];
+    const weaponDamage = Math.max(8, (state.weapon && state.weapon !== "None" ? 10 : 0) + Number(state.damageBonus || 0));
+    const weaponName = state.weapon && state.weapon !== "None" ? state.weapon : "PIĘŚCI";
+
+    document.getElementById("weapon-label").textContent = weaponName + " (" + weaponDamage + " DMG)";
+    const roomLabel = document.getElementById("room-label");
+    const healthLabel = document.getElementById("health-label");
+    const healthFill = document.getElementById("health-fill");
+    const mapGrid = document.getElementById("map-grid");
+    rooms.forEach(room => { const tile = document.createElement("div"); tile.className = "map-room"; tile.id = "map-room-" + room.id; mapGrid.appendChild(tile); });
+
+    function makeEnemies(room) {
+        enemies = Array.from({ length: room.enemies }, (_, index) => ({
+            x: 300 + (index % 3) * 190,
+            y: 150 + Math.floor(index / 3) * 180,
+            hp: 35 + state.dungeonLevel * 5,
+            maxHp: 35 + state.dungeonLevel * 5,
+            radius: 17,
+            attackAt: 0,
+            phase: Math.random() * Math.PI * 2
+        }));
+    }
+
+    function enterRoom(roomId, fromRoom) {
+        currentRoom = roomId;
+        player.x = fromRoom === undefined || roomId > fromRoom ? 110 : roomWidth - 110;
+        player.y = roomHeight / 2;
+        makeEnemies(rooms[roomId]);
+        roomLabel.textContent = `${roomId + 1}/${rooms.length}`;
+        rooms[roomId].visited = true;
+        updateMap();
+    }
+
+    function updateMap() {
+        rooms.forEach(room => {
+            const tile = document.getElementById("map-room-" + room.id);
+            tile.className = "map-room" + (room.visited ? " visited" : "") + (room.id === currentRoom ? " current" : "") + (room.cleared ? " cleared" : "");
+        });
+    }
+
+    function updateHud() {
+        healthLabel.textContent = `${Math.max(0, Math.ceil(player.hp))}/${player.maxHp}`;
+        healthFill.style.width = `${Math.max(0, player.hp / player.maxHp * 100)}%`;
+    }
+
+    function distance(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+
+    function attack() {
+        if (finished || performance.now() < player.attackAt) return;
+        player.attackAt = performance.now() + 420;
+        let target = null;
+        let nearest = Infinity;
+        enemies.forEach(enemy => { const gap = distance(player, enemy); if (gap < nearest && gap < 105) { target = enemy; nearest = gap; } });
+        if (!target) return;
+        target.hp -= weaponDamage;
+        if (target.hp <= 0) { enemies = enemies.filter(enemy => enemy !== target); defeated++; }
+        if (enemies.length === 0) { rooms[currentRoom].cleared = true; updateMap(); if (currentRoom === rooms.length - 1) finishDungeon(); }
+    }
+
+    function movementVector() {
+        let x = 0, y = 0;
+        if (keys.has("a")) x -= 1;
+        if (keys.has("d")) x += 1;
+        if (keys.has("w")) y -= 1;
+        if (keys.has("s")) y += 1;
+        if (joystick.active) { x = joystick.x; y = joystick.y; }
+        const length = Math.hypot(x, y) || 1;
+        return { x: x / length, y: y / length, active: x !== 0 || y !== 0 };
+    }
+
+    function update(delta) {
+        if (finished) return;
+        const direction = movementVector();
+        if (direction.active) { player.x += direction.x * player.speed * delta; player.y += direction.y * player.speed * delta; }
+        player.x = Math.max(38, Math.min(roomWidth - 38, player.x));
+        player.y = Math.max(38, Math.min(roomHeight - 38, player.y));
+        enemies.forEach(enemy => {
+            const gap = distance(player, enemy);
+            if (gap > 46) { enemy.x += (player.x - enemy.x) / Math.max(gap, 1) * 26 * delta; enemy.y += (player.y - enemy.y) / Math.max(gap, 1) * 26 * delta; }
+            if (gap < 48 && performance.now() > enemy.attackAt) { player.hp -= Math.max(3, 7 - Number(state.defenseBonus || 0)); enemy.attackAt = performance.now() + 850; updateHud(); if (player.hp <= 0) loseDungeon(); }
+        });
+        if (enemies.length === 0 && player.x > roomWidth - 55 && rooms[currentRoom].exits.some(id => rooms[id].x > rooms[currentRoom].x)) enterRoom(rooms[currentRoom].exits.find(id => rooms[id].x > rooms[currentRoom].x), currentRoom);
+        if (enemies.length === 0 && player.x < 55 && rooms[currentRoom].exits.some(id => rooms[id].x < rooms[currentRoom].x)) enterRoom(rooms[currentRoom].exits.find(id => rooms[id].x < rooms[currentRoom].x), currentRoom);
+        if (enemies.length === 0 && player.y > roomHeight - 55 && rooms[currentRoom].exits.some(id => rooms[id].y > rooms[currentRoom].y)) enterRoom(rooms[currentRoom].exits.find(id => rooms[id].y > rooms[currentRoom].y), currentRoom);
+        if (enemies.length === 0 && player.y < 55 && rooms[currentRoom].exits.some(id => rooms[id].y < rooms[currentRoom].y)) enterRoom(rooms[currentRoom].exits.find(id => rooms[id].y < rooms[currentRoom].y), currentRoom);
+    }
+
+    function draw() {
+        ctx.fillStyle = "#171217"; ctx.fillRect(0, 0, roomWidth, roomHeight);
+        ctx.fillStyle = "#251d1c"; ctx.fillRect(28, 28, roomWidth - 56, roomHeight - 56);
+        ctx.strokeStyle = "#806043"; ctx.lineWidth = 12; ctx.strokeRect(34, 34, roomWidth - 68, roomHeight - 68);
+        ctx.fillStyle = "#312626";
+        for (let x = 50; x < roomWidth - 50; x += 56) for (let y = 50; y < roomHeight - 50; y += 56) ctx.fillRect(x, y, 2, 2);
+        rooms[currentRoom].exits.forEach(id => { const next = rooms[id]; ctx.fillStyle = "#987044"; if (next.x !== rooms[currentRoom].x) ctx.fillRect(next.x > rooms[currentRoom].x ? roomWidth - 42 : 28, roomHeight / 2 - 42, 14, 84); else ctx.fillRect(roomWidth / 2 - 42, next.y > rooms[currentRoom].y ? roomHeight - 42 : 28, 84, 14); });
+        enemies.forEach(enemy => { ctx.fillStyle = "#bd4f45"; ctx.beginPath(); ctx.arc(enemy.x, enemy.y, enemy.radius, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = "#22131a"; ctx.fillRect(enemy.x - 11, enemy.y - 27, 22, 4); ctx.fillStyle = "#65c467"; ctx.fillRect(enemy.x - 11, enemy.y - 27, 22 * Math.max(0, enemy.hp / enemy.maxHp), 4); });
+        ctx.fillStyle = "#5fc4d1"; ctx.fillRect(player.x - 13, player.y - 13, 26, 26); ctx.fillStyle = "#eaf5d5"; ctx.fillRect(player.x - 5, player.y - 18, 10, 5);
+        ctx.fillStyle = "#f4d06f"; ctx.font = "16px monospace"; ctx.fillText(`Pokój ${currentRoom + 1}: ${enemies.length ? "pokonaj potwory" : "przejdź przez wyjście"}`, 52, roomHeight - 48);
+    }
+
+    function frame(now) { const delta = Math.min((now - lastFrame) / 1000, .05); lastFrame = now; update(delta); draw(); requestAnimationFrame(frame); }
+    function showResult(title, text) { finished = true; document.getElementById("message-title").textContent = title; document.getElementById("message-text").textContent = text; document.getElementById("message").classList.remove("hidden"); }
+    async function finishDungeon() {
+        try { await db.collection("users").doc(state.nickname).update({ dungeonLevel: firebase.firestore.FieldValue.increment(1), "inventory.stone": firebase.firestore.FieldValue.increment(Math.max(1, Math.round(state.rank === "VIP" ? 1.5 : 1))), "inventory.meat": firebase.firestore.FieldValue.increment(1), monstersDefeated: firebase.firestore.FieldValue.increment(defeated) }); showResult("LOCH UKOŃCZONY", `Pokonałeś ${defeated} potworów.\nNagrody: Stone i Meat.`); }
+        catch (error) { console.error("Błąd zapisu wyniku lochu:", error.code, error.message, error); showResult("WYNIK LOKALNY", "Loch ukończony, ale zapis nagrody się nie udał. Skontaktuj się z administracją."); }
+    }
+    function loseDungeon() { showResult("PORAŻKA", `Potwory pokonały bohatera. Pokonani: ${defeated}.`); }
+    function leave() { sessionStorage.removeItem("pixelRpgDungeonState"); window.location.href = "index.html"; }
+    document.addEventListener("keydown", event => { keys.add(event.key.toLowerCase()); if (event.key === " ") { event.preventDefault(); attack(); } });
+    document.addEventListener("keyup", event => keys.delete(event.key.toLowerCase()));
+    document.getElementById("attack").addEventListener("click", attack);
+    document.getElementById("leave").addEventListener("click", leave);
+    document.getElementById("message-action").addEventListener("click", leave);
+    const joystickElement = document.getElementById("joystick"); const stick = document.getElementById("stick");
+    function updateJoystick(event) { const rect = joystickElement.getBoundingClientRect(); const x = event.clientX - (rect.left + rect.width / 2); const y = event.clientY - (rect.top + rect.height / 2); const radius = rect.width / 2 - 14; const length = Math.min(Math.hypot(x, y), radius); const angle = Math.atan2(y, x); joystick.x = Math.cos(angle) * length / radius; joystick.y = Math.sin(angle) * length / radius; stick.style.transform = `translate(${joystick.x * radius}px, ${joystick.y * radius}px)`; }
+    joystickElement.addEventListener("pointerdown", event => { joystick.active = true; joystickElement.setPointerCapture(event.pointerId); updateJoystick(event); });
+    joystickElement.addEventListener("pointermove", event => { if (joystick.active) updateJoystick(event); });
+    joystickElement.addEventListener("pointerup", () => { joystick.active = false; joystick.x = 0; joystick.y = 0; stick.style.transform = "translate(0, 0)"; });
+    enterRoom(0); updateHud(); requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
