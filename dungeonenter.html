@@ -81,11 +81,11 @@
     const roomWidth = 960;
     const roomHeight = 540;
     const rooms = [
-        { id: 0, exits: [1], enemies: 2 },
-        { id: 1, exits: [2], enemies: 3 },
-        { id: 2, exits: [3], enemies: 2 },
-        { id: 3, exits: [4], enemies: 4 },
-        { id: 4, exits: [], enemies: 1 }
+        { id: 0, exits: [1], baseEnemies: 2 },
+        { id: 1, exits: [2], baseEnemies: 3 },
+        { id: 2, exits: [3], baseEnemies: 2 },
+        { id: 3, exits: [4], baseEnemies: 4 },
+        { id: 4, exits: [], baseEnemies: 1 }
     ];
     const player = { x: 120, y: roomHeight / 2, radius: 15, hp: 100, maxHp: 100, speed: 210, attackAt: 0, facingX: 1, facingY: 0 };
     const keys = new Set();
@@ -106,11 +106,14 @@
     rooms.forEach(room => { const tile = document.createElement("div"); tile.className = "map-room"; tile.id = "map-room-" + room.id; mapGrid.appendChild(tile); });
 
     function makeEnemies(room) {
-        enemies = Array.from({ length: room.enemies }, (_, index) => ({
+        const dungeonLevel = Math.max(1, Number(state.dungeonLevel) || 1);
+        const enemyCount = room.baseEnemies + Math.floor((dungeonLevel - 1) / 3);
+        const enemyHealth = 35 + dungeonLevel * 8;
+        enemies = Array.from({ length: enemyCount }, (_, index) => ({
             x: 300 + (index % 3) * 190,
             y: 150 + Math.floor(index / 3) * 180,
-            hp: 35 + state.dungeonLevel * 5,
-            maxHp: 35 + state.dungeonLevel * 5,
+            hp: enemyHealth,
+            maxHp: enemyHealth,
             radius: 17,
             attackAt: 0,
             phase: Math.random() * Math.PI * 2
@@ -230,18 +233,32 @@
     async function finishDungeon() {
         if (finished) return;
         finished = true;
+        const currentLevel = Math.max(1, Number(state.dungeonLevel) || 1);
+        const rankMultiplier = state.rank === "OWNER" ? 2 : state.rank === "VIP" ? 1.5 : 1;
         const lootTable = [
-            { label: "Stone", update: { "inventory.stone": firebase.firestore.FieldValue.increment(2) } },
-            { label: "Meat", update: { "inventory.meat": firebase.firestore.FieldValue.increment(2) } },
-            { label: "Metal", update: { "inventory.metal": firebase.firestore.FieldValue.increment(1) } },
-            { label: "Diamond", update: { "inventory.diamond": firebase.firestore.FieldValue.increment(1) } }
+            { key: "stone", label: "Stone", amount: Math.max(2, Math.round(2 * rankMultiplier)) },
+            { key: "meat", label: "Meat", amount: Math.max(2, Math.round(2 * rankMultiplier)) },
+            { key: "metal", label: "Metal", amount: Math.max(1, Math.round(rankMultiplier)) },
+            { key: "diamond", label: "Diamond", amount: 1 }
         ];
         const loot = lootTable[Math.floor(Math.random() * lootTable.length)];
         try {
-            await db.collection("users").doc(state.nickname).update({ dungeonLevel: firebase.firestore.FieldValue.increment(1), ...loot.update, monstersDefeated: firebase.firestore.FieldValue.increment(defeated) });
-            showResult("LOCH UKOŃCZONY", `Pokonałeś ${defeated} potworów.\nŁUP: ${loot.label}.\nPowrót prowadzi do ekranu głównego.`);
+            const userRef = db.collection("users").doc(state.nickname);
+            await db.runTransaction(async transaction => {
+                const snapshot = await transaction.get(userRef);
+                if (!snapshot.exists) throw new Error("Profil gracza nie istnieje.");
+                const account = snapshot.data();
+                if (account.accountDeleted === true) throw new Error("Konto jest usunięte.");
+                const storedLevel = Math.max(1, Number(account.dungeonLevel) || currentLevel);
+                transaction.update(userRef, {
+                    dungeonLevel: storedLevel + 1,
+                    [`inventory.${loot.key}`]: firebase.firestore.FieldValue.increment(loot.amount),
+                    monstersDefeated: firebase.firestore.FieldValue.increment(defeated)
+                });
+            });
+            showResult("LOCH UKOŃCZONY", `Pokonałeś ${defeated} potworów.\nŁUP: ${loot.amount} ${loot.label}.\nLoch awansował na poziom ${currentLevel + 1}.\nPowrót prowadzi do ekranu głównego.`);
         }
-        catch (error) { console.error("Błąd zapisu wyniku lochu:", error.code, error.message, error); showResult("WYNIK LOKALNY", "Loch ukończony, ale zapis nagrody się nie udał. Skontaktuj się z administracją."); }
+        catch (error) { console.error("Błąd zapisu wyniku lochu:", error.code || "dungeon/reward-save", error.message, error); showResult("BŁĄD NAGRODY", "Nie udało się zapisać nagrody i awansu lochu. Nie opuszczaj jeszcze gry i sprawdź reguły Firebase."); }
     }
     function loseDungeon() { showResult("PORAŻKA", `Potwory pokonały bohatera. Pokonani: ${defeated}.`); }
     function leave() { sessionStorage.removeItem("pixelRpgDungeonState"); window.location.href = "index.html"; }
