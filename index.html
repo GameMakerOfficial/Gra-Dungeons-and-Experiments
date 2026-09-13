@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+    <title>Pixel RPG Tycoon</title>
+
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+
+    <!-- FIREBASE -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            font-family: 'Press Start 2P', monospace;
+        }
+
+        html,
+        body {
+            background-color: #000;
+            color: #fff;
+            width: 100vw;
+            height: 100vh;
+            height: calc(var(--vh, 1vh) * 100);
+            overflow: hidden;
+            position: fixed;
+        }
+
+        #game-container {
+            width: 100vw;
+            height: 100vh;
+            height: calc(var(--vh, 1vh) * 100);
+            background: url('./background.jpg') no-repeat center center;
+            background-size: cover;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #start-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(20, 30, 20, 0.95);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+        }
+
+        .panel {
+            background: #5E3A21;
+            border: 4px solid #3A2313;
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+            box-shadow:
+                inset 0 0 10px rgba(0,0,0,0.5),
+                0 5px 15px rgba(0,0,0,0.8);
+            width: 85%;
+            max-width: 320px;
+        }
+
+        input,
+        select {
+            width: 100%;
+            padding: 10px;
+            margin: 8px 0;
+            background: #2C1A0E;
+            border: 2px solid #8B5A2B;
+            color: #fff;
+            text-align: center;
+            font-size: 10px;
+            outline: none;
+            border-radius: 4px;
+        }
+
+        .btn {
+            background: #4CAF50;
+            border: 4px solid #2E7D32;
+            color: white;
+            padding: 12px;
+            font-size: 9px;
+            text-transform: uppercase;
+            cursor: pointer;
+            box-shadow: 0 4px 0 #1B5E20;
+            border-radius: 4px;
+            text-shadow: 2px 2px 0px #000;
+            transition:
+                transform 0.1s ease,
+                background 0.2s ease;
+        }
+
+        .btn:active {
+            transform: translateY(4px);
+            box-shadow: 0 0 0 #1B5E20;
+        }
+
+        #audio-toggle {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            z-index: 110;
+            width: 38px;
+            height: 38px;
+            padding: 0;
+            background: #2C1A0E;
+            border: 2px solid #8B5A2B;
+            color: #FFD700;
+            font-size: 16px;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+
+        #audio-toggle:active {
+            transform: scale(0.94);
+        }
+
+        #custom-modal {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 200;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+
+        #custom-modal.active {
+            opacity: 1;
+            pointer-events: auto;
+            background: rgba(0, 0, 0, 0.85);
+        }
+
+        .modal-panel {
+            width: 90%;
+            max-width: 340px;
+            max-height: 85vh;
+            overflow-y: auto;
+            background: #5E3A21;
+            border: 4px solid #3A2313;
+            border-radius: 8px;
+            padding: 15px;
+            text-align: center;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.9);
+            transform: scale(0.7);
+            transition:
+                transform 0.3s
+                cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        #custom-modal.active .modal-panel {
+            transform: scale(1);
+        }
+
+        #modal-title {
+            font-size: 12px;
+            color: #FFD700;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 0 #000;
+        }
+
+        #modal-desc {
+            font-size: 8px;
+            line-height: 1.6;
+            color: #E0E0E0;
+            margin-bottom: 15px;
+            white-space: pre-wrap;
+        }
+
+        #modal-timer {
+            font-size: 16px;
+            color: #FF9800;
+            margin: 10px 0;
+            text-shadow: 2px 2px 0 #000;
+            display: none;
+        }
+
+        #modal-buttons {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .modal-section-title {
+            color: #FFD700;
+            font-size: 8px;
+            margin: 12px 0 8px;
+            text-align: left;
+            border-bottom: 2px solid #8B5A2B;
+            padding-bottom: 5px;
+        }
+
+        .modal-tabs {
+            display: flex;
+            gap: 6px;
+            margin-bottom: 10px;
+        }
+
+        .modal-tab,
+        .slot-action {
+            background: #8B5A2B;
+            border: 2px solid #3A2313;
+            color: #fff;
+            padding: 7px 5px;
+            font-family: inherit;
+            font-size: 7px;
+            cursor: pointer;
+            text-shadow: 1px 1px #000;
+        }
+
+        .modal-tab {
+            flex: 1;
+        }
+
+        .social-tabs {
+            overflow-x: auto;
+        }
+
+        .social-tabs .modal-tab {
+            min-width: 86px;
+            font-size: 6px;
+        }
+
+        .modal-tab.active,
+        .modal-tab:active,
+        .slot-action:active {
+            background: #4CAF50;
+        }
+
+        .modal-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 6px;
+        }
+
+        .inventory-slot {
+            min-height: 64px;
+            padding: 6px 3px;
+            background: #2C1A0E;
+            border: 2px solid #8B5A2B;
+            color: #E0E0E0;
+            font-size: 6px;
+            line-height: 1.5;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .inventory-slot strong {
+            color: #FFD700;
+            font-size: 7px;
+        }
+
+        .slot-action {
+            padding: 5px 3px;
+            font-size: 6px;
+            width: 100%;
+        }
+
+        .stat-row,
+        .friend-row,
+        .profile-row {
+            background: #2C1A0E;
+            border: 2px solid #8B5A2B;
+            padding: 8px;
+            margin: 5px 0;
+            font-size: 7px;
+            line-height: 1.5;
+            text-align: left;
+        }
+
+        .stat-row,
+        .profile-row {
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .friend-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .online {
+            color: #4CAF50;
+        }
+
+        .offline {
+            color: #999;
+        }
+
+        .modal-input {
+            margin: 5px 0;
+            font-size: 7px;
+        }
+
+        .ranking-table {
+            width: 100%;
+            border-collapse: collapse;
+            color: #E0E0E0;
+            font-size: 6px;
+            text-align: left;
+        }
+
+        .ranking-table th {
+            color: #FFD700;
+            background: #2C1A0E;
+            border-bottom: 2px solid #8B5A2B;
+            padding: 6px 3px;
+        }
+
+        .ranking-table td {
+            border-bottom: 1px solid #8B5A2B;
+            padding: 6px 3px;
+            line-height: 1.4;
+        }
+
+        .ranking-table tr.current-player {
+            background: #6D4C1D;
+            color: #FFFFFF;
+            outline: 2px solid #FFD700;
+        }
+
+        .ranking-table tr.current-player td {
+            color: #FFFFFF;
+        }
+
+        .lab-card {
+            background: #2C1A0E;
+            border: 2px solid #8B5A2B;
+            padding: 8px;
+            margin: 7px 0;
+            text-align: left;
+            font-size: 7px;
+            line-height: 1.5;
+        }
+
+        .lab-card strong {
+            display: block;
+            color: #FFD700;
+            margin-bottom: 4px;
+        }
+
+        .lab-cost {
+            display: block;
+            color: #BDBDBD;
+            margin: 4px 0 6px;
+            font-size: 6px;
+        }
+
+        .lab-card .slot-action {
+            width: 100%;
+        }
+
+        .craft-card,
+        .leaderboard-row,
+        .inbox-item {
+            background: #2C1A0E;
+            margin: 8px 0;
+            padding: 10px;
+            border-radius: 6px;
+            text-align: left;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 7px;
+            line-height: 1.4;
+            border: 2px solid #8B5A2B;
+        }
+
+        #top-bar {
+            background: rgba(58, 35, 19, 0.9);
+            border-bottom: 4px solid #2C1A0E;
+            padding: 8px 10px;
+            display: none;
+            justify-content: space-between;
+            font-size: 7px;
+            line-height: 1.4;
+            z-index: 10;
+        }
+
+        .player-info {
+            color: #FFD700;
+        }
+
+        .resources {
+            text-align: right;
+            color: #E0E0E0;
+        }
+
+        .hitbox {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.4);
+            border: 2px dashed rgba(255, 255, 255, 0.5);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            font-size: 7px;
+            color: white;
+            text-shadow: 1px 1px 2px black;
+            border-radius: 8px;
+            transition:
+                transform 0.2s ease,
+                background 0.2s ease;
+        }
+
+        .hitbox:active {
+            transform: scale(0.95);
+            background: rgba(0, 0, 0, 0.6);
+        }
+
+        #zone-lab {
+            left: 5%;
+            top: 38%;
+            width: 42%;
+            height: 26%;
+        }
+
+        #zone-dungeon {
+            right: 5%;
+            top: 38%;
+            width: 42%;
+            height: 26%;
+        }
+
+        #game-nav-bar {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 55px;
+            background: rgba(30, 15, 5, 0.95);
+            border-top: 4px solid #3A2313;
+            display: none;
+            justify-content: space-around;
+            align-items: center;
+            z-index: 10;
+            padding: 0 5px;
+        }
+
+        .nav-btn {
+            background: #5E3A21;
+            border: 2px solid #8B5A2B;
+            color: #FFD700;
+            font-size: 6px;
+            padding: 8px 4px;
+            border-radius: 4px;
+            text-align: center;
+            flex: 1;
+            margin: 0 2px;
+            cursor: pointer;
+            text-shadow: 1px 1px #000;
+        }
+
+        .nav-btn:active {
+            background: #8B5A2B;
+        }
+
+        .sniper-upgrade-box {
+            background: #1B0F05;
+            border: 2px solid #FF9800;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 6px;
+            color: #FFD700;
+            font-size: 7px;
+            line-height: 1.7;
+        }
+    </style>
+</head>
+
+<body>
+
+<div id="game-container">
+
+    <button id="audio-toggle" type="button" aria-label="Wycisz dźwięk" title="Wycisz dźwięk">🔊</button>
+
+    <!-- START SCREEN -->
+    <div id="start-screen">
+
+        <div class="panel">
+
+            <h2 style="font-size: 14px; margin-bottom: 15px; color: #4CAF50;">
+                Pixel RPG<br>Tycoon
+            </h2>
+
+            <p style="font-size: 8px; color: #aaa; text-align: left;">
+                NICKNAME:
+            </p>
+
+            <input
+                type="text"
+                id="nickname-input"
+                placeholder="Player123"
+                maxlength="30"
+            >
+
+            <p style="font-size: 8px; color: #aaa; text-align: left; margin-top: 5px;">
+                PASSWORD:
+            </p>
+
+            <input
+                type="password"
+                id="password-input"
+                placeholder="••••••••"
+                maxlength="30"
+            >
+
+            <div style="display: flex; gap: 8px; margin-top: 10px;">
+
+                <button
+                    class="btn"
+                    style="flex: 1;"
+                    onclick="handleLogin()"
+                >
+                    LOGIN
+                </button>
+
+                <button
+                    class="btn"
+                    style="
+                        flex: 1;
+                        background: #2196F3;
+                        border-color: #1976D2;
+                        box-shadow: 0 4px 0 #0D47A1;
+                    "
+                    onclick="handleRegister()"
+                >
+                    REGISTER
+                </button>
+
+            </div>
+
+        </div>
+
+    </div>
+
+
+    <!-- MODAL -->
+    <div id="custom-modal">
+
+        <div class="modal-panel">
+
+            <h3 id="modal-title">
+                TYTUŁ
+            </h3>
+
+            <div id="modal-timer">
+                30s
+            </div>
+
+            <div id="modal-desc">
+                Treść okienka...
+            </div>
+
+            <div id="modal-buttons"></div>
+
+        </div>
+
+    </div>
+
+
+    <!-- TOP BAR -->
+    <div id="top-bar">
+
+        <div class="player-info">
+
+            <span id="ui-nick">
+                Name
+            </span>
+
+            <span
+                id="ui-rank"
+                style="color: #ff9800;"
+            >
+                [PLAYER]
+            </span>
+
+            <br>
+
+            Weapon:
+            <span
+                id="ui-weapon"
+                style="color: #fff;"
+            >
+                None
+            </span>
+
+        </div>
+
+
+        <div class="resources">
+
+            🪵 Plank:
+            <span id="res-plank">0</span>
+            |
+            🪨 Stone:
+            <span id="res-stone">0</span>
+
+            <br>
+
+            🍖 Meat:
+            <span id="res-meat">0</span>
+            |
+            ⚙️ Metal:
+            <span id="res-metal">0</span>
+
+            <br>
+
+            💎 Diam:
+            <span id="res-diamond">0</span>
+            |
+            🔮 Myth:
+            <span id="res-mythril">0</span>
+
+            <br>
+
+            <span id="upgrade-resource-ui" style="display:none;">
+                🔼 Upgrade:
+                <span id="res-upgrade">0</span>
+            </span>
+
+        </div>
+
+    </div>
+
+
+    <!-- MAP -->
+    <div
+        id="zone-lab"
+        class="hitbox"
+        onclick="openLab()"
+    >
+        ENTER<br>
+        LABORATORY
+    </div>
+
+
+    <div
+        id="zone-dungeon"
+        class="hitbox"
+        onclick="enterDungeon()"
+    >
+        ENTER<br>
+        DUNGEON<br>
+        Lv.
+        <span id="dungeon-lvl-display">
+            1
+        </span>
+    </div>
+
+
+    <!-- NAVIGATION -->
+    <div id="game-nav-bar">
+
+        <button
+            class="nav-btn"
+            onclick="openInventory()"
+        >
+            🎒 EQ
+        </button>
+
+        <button
+            class="nav-btn"
+            onclick="openLab()"
+        >
+            🧪 LAB
+        </button>
+
+        <button
+            class="nav-btn"
+            onclick="enterDungeon()"
+        >
+            ⚔️ DUNGEON
+        </button>
+
+        <button
+            class="nav-btn"
+            onclick="showLeaderboard()"
+        >
+            🏆 TOP 100
+        </button>
+
+        <button
+            class="nav-btn"
+            onclick="openSocial()"
+            style="
+                border-color: #2196F3;
+                color: #64B5F6;
+            "
+        >
+            📬 SOCIAL
+        </button>
+
+    </div>
+
+</div>
+
+
+<script src="script.js"></script>
+
+</body>
+</html>
