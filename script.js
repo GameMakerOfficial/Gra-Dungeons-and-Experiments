@@ -147,7 +147,35 @@ const firebaseConfig = {
 };
 
 firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
 const db = firebase.firestore();
+
+function getVirtualEmail(nickname) {
+    return `${String(nickname || "").trim().toLowerCase()}@mojagra.local`;
+}
+
+function isValidNickname(nickname) {
+    return /^[a-zA-Z0-9_.-]{3,30}$/.test(nickname);
+}
+
+function getFirebaseErrorMessage(error, operation) {
+    console.error(`Firebase ${operation} error:`, error.code, error.message, error);
+    const messages = {
+        "auth/email-already-in-use": "To konto jest już zarejestrowane.",
+        "auth/invalid-email": "Nieprawidłowa nazwa użytkownika.",
+        "auth/weak-password": "Hasło musi mieć co najmniej 6 znaków.",
+        "auth/user-not-found": "Konto nie istnieje. Sprawdź nazwę lub zarejestruj nowe konto.",
+        "auth/wrong-password": "Błędne hasło.",
+        "auth/invalid-credential": "Błędna nazwa użytkownika lub hasło.",
+        "auth/network-request-failed": "Brak połączenia z internetem lub Firebase.",
+        "auth/operation-not-allowed": "Logowanie e-mailem i hasłem jest wyłączone w Firebase Console.",
+        "auth/too-many-requests": "Zbyt wiele prób. Spróbuj ponownie później.",
+        "permission-denied": "Brak uprawnień do bazy danych Firebase.",
+        "unavailable": "Baza danych jest chwilowo niedostępna.",
+        "failed-precondition": "Firebase wymaga dodatkowej konfiguracji bazy danych."
+    };
+    return `Nie udało się ${operation === "rejestracji" ? "utworzyć konta" : "zalogować"}. ${messages[error.code] || "Sprawdź połączenie i spróbuj ponownie."}`;
+}
 
 // --- GRACZ ---
 let player = {
@@ -1089,6 +1117,12 @@ async function handleRegister() {
     if (nickInput === "" || passInput === "") {
         return showModal("BŁĄD", "Wpisz zarówno Nick jak i Hasło!", [{ text: "OK", color: "#f44336" }]);
     }
+    if (!isValidNickname(nickInput)) {
+        return showModal("BŁĘDNY NICK", "Nick musi mieć 3-30 znaków: litery, cyfry, _, - lub .", [{ text: "OK", color: "#f44336" }]);
+    }
+    if (passInput.length < 6) {
+        return showModal("BŁĄD", "Hasło musi mieć co najmniej 6 znaków.", [{ text: "OK", color: "#f44336" }]);
+    }
 
     showModal("ŁADOWANIE...", "Tworzenie konta w chmurze...", []);
 
@@ -1108,9 +1142,10 @@ async function handleRegister() {
             return showModal("KONTO USUNIĘTE", deletedAccountMessage, [{ text: "OK", color: "#f44336" }]);
         }
 
+        const credential = await auth.createUserWithEmailAndPassword(getVirtualEmail(nickInput), passInput);
         let newPlayer = {
             nickname: nickInput,
-            password: passInput,
+            authUid: credential.user.uid,
             rank: (nickInput === "GameMaker_Official") ? "OWNER" : "PLAYER",
             weapon: "None",
             dungeonLevel: 1,
@@ -1123,13 +1158,20 @@ async function handleRegister() {
             inbox: []
         };
 
-        await docRef.set(newPlayer);
+        try {
+            await docRef.set(newPlayer);
+        } catch (databaseError) {
+            console.error("Firebase rejestracja: zapis profilu nieudany:", databaseError.code, databaseError.message, databaseError);
+            await credential.user.delete().catch(deleteError => console.error("Firebase rollback Auth:", deleteError.code, deleteError.message, deleteError));
+            throw databaseError;
+        }
+
+        await auth.signOut();
 
         showModal("SUKCES!", "Konto utworzone pomyślnie w chmurze!\nKliknij LOGIN.", [{ text: "SUPER", color: "#4CAF50" }]);
 
     } catch (e) {
-        console.error("Błąd rejestracji:", e);
-        showModal("BŁĄD FIREBASE", "Nie udało się połączyć z bazą danych.", [{ text: "OK", color: "#f44336" }]);
+        showModal("BŁĄD REJESTRACJI", getFirebaseErrorMessage(e, "rejestracji"), [{ text: "OK", color: "#f44336" }]);
     }
 }
 
@@ -1143,6 +1185,9 @@ async function handleLogin() {
 
     if (nickInput === "") {
         return showModal("BŁĄD", "Wpisz Nick!", [{ text: "OK", color: "#f44336" }]);
+    }
+    if (!isValidNickname(nickInput)) {
+        return showModal("BŁĘDNY NICK", "Nick musi mieć 3-30 znaków: litery, cyfry, _, - lub .", [{ text: "OK", color: "#f44336" }]);
     }
 
     showModal("ŁADOWANIE...", "Logowanie do chmury...", []);
@@ -1167,9 +1212,26 @@ async function handleLogin() {
         }
 
         let userData = docSnap.data();
+        let authUser;
 
-        if (userData.password !== passInput) {
-            return showModal("BŁĄD", "Błędne hasło!", [{ text: "OK", color: "#f44336" }]);
+        try {
+            const credential = await auth.signInWithEmailAndPassword(getVirtualEmail(nickInput), passInput);
+            authUser = credential.user;
+        } catch (authError) {
+            // Jednorazowa migracja kont utworzonych przed wdrożeniem Firebase Auth.
+            if (authError.code === "auth/user-not-found" && userData.password === passInput && passInput.length >= 6) {
+                const credential = await auth.createUserWithEmailAndPassword(getVirtualEmail(nickInput), passInput);
+                authUser = credential.user;
+                await db.collection("users").doc(nickInput).update({ authUid: authUser.uid });
+            } else {
+                throw authError;
+            }
+        }
+
+        if (userData.authUid && authUser.uid !== userData.authUid) {
+            console.error("Firebase logowanie: niezgodny authUid", userData.authUid, authUser.uid);
+            await auth.signOut();
+            return showModal("BŁĄD KONTA", "Nie można potwierdzić danych tego konta. Skontaktuj się z administracją.", [{ text: "OK", color: "#f44336" }]);
         }
 
         player = userData;
@@ -1205,8 +1267,7 @@ async function handleLogin() {
         }
 
     } catch (e) {
-        console.error("Błąd logowania:", e);
-        showModal("BŁĄD FIREBASE", "Nie udało się połączyć z bazą danych.\nSprawdź konsolę przeglądarki.", [{ text: "OK", color: "#f44336" }]);
+        showModal("BŁĄD LOGOWANIA", getFirebaseErrorMessage(e, "logowania"), [{ text: "OK", color: "#f44336" }]);
     }
 }
 
