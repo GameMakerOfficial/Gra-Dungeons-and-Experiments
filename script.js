@@ -508,6 +508,29 @@ async function loadOwnerAccounts(container) {
                 return;
             }
 
+            if (account.accountDeleted === true) {
+                const deletedLabel = document.createElement("span");
+                deletedLabel.textContent = "KONTO USUNIĘTE PRZEZ ADMINISTRACJĘ";
+                card.appendChild(deletedLabel);
+                const restoreButton = createModalButton("PRZYWRÓĆ KONTO", async () => {
+                    try {
+                        await db.collection("users").doc(doc.id).update({
+                            accountDeleted: false,
+                            deletedAt: firebase.firestore.FieldValue.delete(),
+                            deletedBy: firebase.firestore.FieldValue.delete()
+                        });
+                        await db.collection("deletedAccounts").doc(doc.id).delete().catch(() => {});
+                        loadOwnerAccounts(container);
+                    } catch (error) {
+                        console.error("Błąd przywracania konta:", error);
+                        showModal("BŁĄD", "Nie udało się przywrócić konta.", [{ text: "OK", color: "#f44336" }]);
+                    }
+                }, "#4CAF50");
+                card.appendChild(restoreButton);
+                container.appendChild(card);
+                return;
+            }
+
             const newNameInput = document.createElement("input");
             newNameInput.className = "modal-input";
             newNameInput.type = "text";
@@ -530,6 +553,7 @@ async function loadOwnerAccounts(container) {
                 await newDoc.set(updatedAccount);
                 await db.collection("users").doc(doc.id).delete();
                 await updateClanAccountReferences(doc.id, newName);
+                await updateFriendAccountReferences(doc.id, newName);
                 loadOwnerAccounts(container);
             }, "#2196F3");
             const passwordButton = createModalButton("ZMIEŃ HASŁO", async () => {
@@ -541,16 +565,16 @@ async function loadOwnerAccounts(container) {
             }, "#FF9800");
             const deleteButton = createModalButton("USUŃ KONTO", async () => {
                 if (!window.confirm(`Czy na pewno usunąć konto ${doc.id}?`)) return;
-                const batch = db.batch();
-                batch.delete(db.collection("users").doc(doc.id));
-                batch.set(db.collection("deletedAccounts").doc(doc.id), {
-                    nickname: doc.id,
-                    deletedAt: firebase.firestore.FieldValue.serverTimestamp(),
-                    deletedBy: player.nickname
-                });
-                await batch.commit();
-                await updateClanAccountReferences(doc.id, null);
-                loadOwnerAccounts(container);
+                try {
+                    await db.collection("users").doc(doc.id).update({ accountDeleted: true, deletedAt: firebase.firestore.FieldValue.serverTimestamp(), deletedBy: player.nickname });
+                    await db.collection("deletedAccounts").doc(doc.id).set({ nickname: doc.id, deletedAt: firebase.firestore.FieldValue.serverTimestamp(), deletedBy: player.nickname }).catch(error => console.warn("Nie udało się zapisać znacznika deletedAccounts:", error));
+                    await updateClanAccountReferences(doc.id, null);
+                    await updateFriendAccountReferences(doc.id, null);
+                    loadOwnerAccounts(container);
+                } catch (error) {
+                    console.error("Błąd usuwania konta:", error);
+                    showModal("BŁĄD USUWANIA", "Nie udało się usunąć konta. Sprawdź reguły Firebase.", [{ text: "OK", color: "#f44336" }]);
+                }
             }, "#f44336");
             card.append(newNameInput, newPasswordInput, renameButton, passwordButton, deleteButton);
             container.appendChild(card);
@@ -578,6 +602,20 @@ async function updateClanAccountReferences(oldNickname, newNickname) {
         if (ownerNickname !== clan.ownerNickname || JSON.stringify(members) !== JSON.stringify(updatedMembers) || JSON.stringify(requests) !== JSON.stringify(updatedRequests)) {
             updates.push(doc.ref.update({ ownerNickname, memberNicknames: updatedMembers, pendingRequests: updatedRequests }));
         }
+    });
+    await Promise.all(updates);
+}
+
+async function updateFriendAccountReferences(oldNickname, newNickname) {
+    const snapshot = await db.collection("users").limit(200).get();
+    const updates = [];
+    snapshot.forEach(doc => {
+        const account = doc.data();
+        const friends = Array.isArray(account.friends) ? account.friends : [];
+        const updatedFriends = newNickname
+            ? friends.map(friend => friend.nickname === oldNickname ? { ...friend, nickname: newNickname } : friend)
+            : friends.filter(friend => friend.nickname !== oldNickname);
+        if (JSON.stringify(friends) !== JSON.stringify(updatedFriends)) updates.push(doc.ref.update({ friends: updatedFriends }));
     });
     await Promise.all(updates);
 }
@@ -671,10 +709,12 @@ function openSocial() {
         openSocial();
     });
 
-    content.querySelector("#add-friend").addEventListener("click", () => {
+    content.querySelector("#add-friend").addEventListener("click", async () => {
         const nickname = content.querySelector("#friend-nickname").value.trim();
         if (!nickname) return showModal("BRAK NICKU", "Wpisz nick znajomego.", [{ text: "OK", color: "#f44336" }]);
         if (nickname === player.nickname) return showModal("NIEPOPRAWNY NICK", "Nie możesz dodać siebie.", [{ text: "OK", color: "#f44336" }]);
+        const friendSnapshot = await db.collection("users").doc(nickname).get();
+        if (!friendSnapshot.exists || friendSnapshot.data().accountDeleted === true) return showModal("KONTO NIEDOSTĘPNE", "Nie można znaleźć tego konta.", [{ text: "OK", color: "#f44336" }]);
         player.friends = friends;
         player.friends.push({ nickname, level: 1, online: false });
         saveProgress().catch(error => console.error("Błąd zapisu znajomych:", error));
@@ -929,7 +969,7 @@ async function showLeaderboard() {
         const snapshot = await db.collection("users").orderBy("dungeonLevel", "desc").limit(100).get();
         ranking = snapshot.docs
             .map(doc => doc.data())
-            .filter(user => user.nickname && !isBot(user))
+            .filter(user => user.nickname && user.accountDeleted !== true && !isBot(user))
             .map(user => ({
                 nickname: user.nickname,
                 rank: user.rank || "PLAYER",
@@ -1056,6 +1096,10 @@ async function handleRegister() {
         const docRef = db.collection("users").doc(nickInput);
         const docSnap = await docRef.get();
 
+        if (docSnap.exists && docSnap.data().accountDeleted === true) {
+            return showModal("KONTO USUNIĘTE", deletedAccountMessage, [{ text: "OK", color: "#f44336" }]);
+        }
+
         if (docSnap.exists) {
             return showModal("BŁĄD", "Konto o tym nicku już istnieje! Kliknij LOGIN.", [{ text: "OK", color: "#f44336" }]);
         }
@@ -1112,6 +1156,10 @@ async function handleLogin() {
                 return showModal("KONTO USUNIĘTE", deletedAccountMessage, [{ text: "OK", color: "#f44336" }]);
             }
             return showModal("BŁĄD", "Konto nie istnieje! Kliknij REGISTER.", [{ text: "OK", color: "#f44336" }]);
+        }
+
+        if (docSnap.data().accountDeleted === true) {
+            return showModal("KONTO USUNIĘTE", deletedAccountMessage, [{ text: "OK", color: "#f44336" }]);
         }
 
         if (passInput === "") {
