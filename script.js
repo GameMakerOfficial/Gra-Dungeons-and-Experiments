@@ -1291,6 +1291,49 @@ window.showModal = showModal;
 
 // --- AUTOMATYCZNE PODPIĘCIE PRZYCISKÓW PO ZAŁADOWANIU DOM ---
 document.addEventListener("DOMContentLoaded", () => {
+    const translations = {
+        en: {
+            instructionsTitle: "HOW TO PLAY",
+            instructionsText: "Explore the dungeon, defeat monsters and collect loot. Move with W, A, S, D on PC or use the joystick on mobile devices. Attack with SPACE or the attack button. Craft and upgrade your weapons in the laboratory.",
+            languageLabel: "LANGUAGE",
+            contactTitle: "CONTACT",
+            contactText: "Follow the game and discover new updates.",
+            nicknameLabel: "NICKNAME:",
+            passwordLabel: "PASSWORD:",
+            loginButton: "LOGIN",
+            registerButton: "REGISTER"
+        },
+        pl: {
+            instructionsTitle: "JAK GRAĆ",
+            instructionsText: "Eksploruj loch, pokonuj potwory i zbieraj łupy. Na komputerze poruszaj się klawiszami W, A, S, D, a na telefonie używaj joysticka. Atakuj spacją lub przyciskiem ataku. Twórz i ulepszaj broń w laboratorium.",
+            languageLabel: "JĘZYK",
+            contactTitle: "KONTAKT",
+            contactText: "Obserwuj grę i poznawaj najnowsze aktualizacje.",
+            nicknameLabel: "NICKNAME:",
+            passwordLabel: "HASŁO:",
+            loginButton: "LOGOWANIE",
+            registerButton: "REJESTRACJA"
+        }
+    };
+
+    const applyLanguage = language => {
+        const selectedLanguage = translations[language] ? language : "en";
+        document.documentElement.lang = selectedLanguage;
+        document.querySelectorAll("[data-i18n]").forEach(element => {
+            const translationKey = element.dataset.i18n;
+            if (translations[selectedLanguage][translationKey]) element.textContent = translations[selectedLanguage][translationKey];
+        });
+        localStorage.setItem("pixelRpgLanguage", selectedLanguage);
+    };
+
+    const languageSelect = document.getElementById("language-select");
+    if (languageSelect) {
+        const savedLanguage = localStorage.getItem("pixelRpgLanguage") || "en";
+        languageSelect.value = translations[savedLanguage] ? savedLanguage : "en";
+        applyLanguage(languageSelect.value);
+        languageSelect.addEventListener("change", event => applyLanguage(event.target.value));
+    }
+
     const audioToggle = document.getElementById("audio-toggle");
     if (audioToggle) audioToggle.addEventListener("click", () => gameAudio.toggle());
 
